@@ -25,6 +25,13 @@ typedef int64_t u64;
 #define PTP_TOD_STORE_ALL	0x3
 #define PTP_TOD_CAPTURE_TIMER	0x4
 
+#define JL3XXX_TOD_COMP_WORD0	0x31c
+#define JL3XXX_TOD_COMP_WORD1	0x31d
+#define JL3XXX_PTP_TOD_LOD_PTR_WORD0	0x310
+#define JL3XXX_PTP_TOD_LOD_PTR_WORD1	0x311
+#define JL3XXX_PTP_TOD_CTL0		0x312
+
+
 #define BIT(n)		(1 << n)
 
 struct jl3xxx_tod_op {
@@ -141,7 +148,7 @@ static inline tmv_t timespec_to_tmv(struct timespec ts)
 	return t;
 }
 
-static void *monitor_tod_status(void *arg)
+static void *monitor_recv_status(void *arg)
 {
 	struct nmea_parser *np = nmea_parser_create();
 	struct pollfd pfd = { -1, POLLIN | POLLPRI };
@@ -233,6 +240,180 @@ char *global_time_to_nmea(void)
 	return time_string;
 }
 
+static void *monitor_send_status(void *arg)
+{
+	struct tod *t = arg;
+
+	while (true) {
+		// TODO
+		t->is_valid = 0;
+		usleep(100000);
+	}
+}
+
+static void *monitor_adj_status(void *arg)
+{
+	struct tod *t = arg;
+	while (true) {
+		printf("adjadjadjadjadjadjadj\n");
+		usleep(100000);
+	}
+}
+
+static int jl3xxx_ptp_adjust_tod_freq(bool positive, int ppm)
+{
+	struct jl3xxx_tod_op ops = {1, PTP_TOD_STORE_COMP, 2, 1, 0};
+	int freq, tod_compensation;
+
+	if (ppm < 0)
+		freq = -ppm;
+	else
+		freq = ppm;
+
+	/*TODO */
+	//tod_compensation = freq | 0x80000000;
+	if (positive)
+		tod_compensation = freq;
+	else
+		tod_compensation = freq;
+
+	phy_c45_write(ETH_NAME, 0, JL3XXX_TOD_COMP_WORD0,
+		      tod_compensation & 0xffff);
+	phy_c45_write(ETH_NAME, 0, JL3XXX_TOD_COMP_WORD1,
+		     (tod_compensation >> 16) & 0xffff);
+
+	wait_tod_done();
+
+	/* tod control config 0*/
+	phy_c45_write(ETH_NAME, 0, 0x312, tod_op_data(&ops));
+
+	wait_tod_done();
+
+	return 0;
+}
+
+static void pid_init(struct jl3xxx_pid *pid) {
+	struct jl3xxx_pid pid_cfg = {
+		.set_offset = 0,
+		.actual_offset = 0,
+		.err = 0,
+		.err_last = 0,
+		.expand = 0,
+		.integral = 0,
+		//kp=38,  kp(60%~70%) = (22 ~ 26.5)
+		//ki=0.8, ki(150%~180%) = (1.2 ~ 1.45)
+		//kd=0, kd(30%~50%) = (0)
+		.kp = 22,	//kp * 60%
+		.ki = 1.2,	//ki * 150%
+		.kd = 0,	//kd * 30%
+	};
+	pid = &pid_cfg;
+}
+
+static int jl3xxx_ptp_adjust_tod_time(char *phydev, bool positive, int offset)
+{
+	struct jl3xxx_tod_op ops = {1, PTP_TOD_CAPTURE_TIMER, 0, 1, 0};
+	u32 cur_ptp_glb_time_w0;
+	u32 cur_ptp_glb_time_w1;
+	u32 tod_load_point;
+	u64 tod_s;
+	u32 tod_ns;
+	u64 tmp_ts;
+	u64 future_tod_s;
+	u64 future_tod_ns;
+	u32 ns_lo, ns_hi;
+	u64 s_lo, s_me, s_hi;
+
+	/* config tod */
+	phy_c45_write(phydev, 0, 0x312, tod_op_data(&ops));
+
+	wait_tod_done();
+
+	cur_ptp_glb_time_w0 = phy_c45_read(phydev, 0, JL3XXX_PTP_TOD_LOD_PTR_WORD0);
+	cur_ptp_glb_time_w1 = phy_c45_read(phydev, 0, JL3XXX_PTP_TOD_LOD_PTR_WORD1);
+	tod_load_point = ((cur_ptp_glb_time_w1 << 16) | cur_ptp_glb_time_w0) +
+			   TOD_LOAD_DELAY/TAI_CLOCK_PERIOD;
+	cur_ptp_glb_time_w1 = (tod_load_point >> 16);
+	cur_ptp_glb_time_w0 = tod_load_point & 0xffff;
+	phy_c45_write(phydev, 0, JL3XXX_PTP_TOD_LOD_PTR_WORD0,
+		      cur_ptp_glb_time_w0);
+	phy_c45_write(phydev, 0, JL3XXX_PTP_TOD_LOD_PTR_WORD1,
+		      cur_ptp_glb_time_w1);
+
+	//get tod time
+	phy_c45_write(phydev, JL3XXX_DEVAD0,
+		      JL3XXX_READ_PULS, 0x8f13);
+	ns_hi = phy_c45_read(phydev, JL3XXX_DEVAD0, JL3XXX_READ_PULS_DATA);
+	ns_lo = phy_c45_read(phydev, JL3XXX_DEVAD0, JL3XXX_READ_PULS_DATA);
+	phy_c45_write(phydev, JL3XXX_DEVAD0,
+		      JL3XXX_READ_PULS, 0x8f15);
+	s_hi = phy_c45_read(phydev, JL3XXX_DEVAD0, JL3XXX_READ_PULS_DATA);
+	s_me = phy_c45_read(phydev, JL3XXX_DEVAD0, JL3XXX_READ_PULS_DATA);
+	s_lo = phy_c45_read(phydev, JL3XXX_DEVAD0, JL3XXX_READ_PULS_DATA);
+
+	tod_s = (s_hi << 32) | (s_me << 16) | s_lo;
+	tod_ns = (ns_hi << 16) | ns_lo;
+
+	tmp_ts = tod_s * 1000000000 + tod_ns + offset  + TOD_LOAD_DELAY;
+
+	future_tod_s = tmp_ts / 1000000000;
+	future_tod_ns = tmp_ts % 1000000000;
+	//set tod time
+	phy_c45_write(phydev, JL3XXX_DEVAD0, JL3XXX_TOD_SEC_WORD0, future_tod_s & 0xffff);
+	phy_c45_write(phydev, JL3XXX_DEVAD0, JL3XXX_TOD_SEC_WORD1, (future_tod_s >> 16) & 0xffff);
+	phy_c45_write(phydev, JL3XXX_DEVAD0, JL3XXX_TOD_SEC_WORD2, (future_tod_s >> 32) & 0xffff);
+
+	phy_c45_write(phydev, JL3XXX_DEVAD0, JL3XXX_TOD_NS_WORD0, future_tod_ns & 0xffff);
+	phy_c45_write(phydev, JL3XXX_DEVAD0, JL3XXX_TOD_NS_WORD1, (future_tod_ns >> 16) & 0xffff);
+
+	/* config tod */
+	ops.store_op = PTP_TOD_STORE_ALL;
+	phy_c45_write(phydev, 0, 0x312, tod_op_data(&ops));
+
+	wait_tod_done();
+
+	return 0;
+}
+
+static void pid_realize(struct phy_adj *adj, bool phase_adj, int ppm){
+	struct jl3xxx_pid *pid = &adj->pid;
+
+	pid->actual_offset = ppm;
+	pid->err = pid->set_offset - pid->actual_offset;
+	printf("pid_err: %d\n", (int)pid->err);
+	pid->integral += pid->err;
+	printf("pid_integral: %d\n", (int)pid->integral);
+	printf("test: %d", (int)(10 * pid->kp));
+	pid->expand = pid->kp * pid->err + pid->ki * pid->integral +
+		       pid->kd * (pid->err - pid->err_last);
+	printf("pid_expand: %d\n", (int)pid->expand);
+	pid->err_last = pid->err;
+	pid->actual_offset = pid->expand * 1;
+
+	printf("ppm: %d", ppm);
+	printf("pid_set_offset: %d\n", (int)pid->actual_offset);
+	jl3xxx_ptp_adjust_tod_freq(phase_adj, (int)pid->actual_offset);
+}
+
+static int phy_freq_adj(struct phy_adj *adj, int freq)
+{
+	pid_realize(adj, adj->dir, freq);
+
+	return 0;
+}
+
+static int phy_offset_adj(struct phy_adj *adj, int offset)
+{
+	return 0;
+}
+
+static void tod_init(struct tod *t)
+{
+	pid_init(&t->adj.pid);
+	t->adj.freq_adj = phy_freq_adj;
+	t->adj.offset_adj = phy_offset_adj;
+}
+
 int tod_recv(void)
 {
 	//tod 输入过程
@@ -242,13 +423,18 @@ int tod_recv(void)
 	//4.往phy里面配置time count
 	struct tod *t;
 	int err;
-	tmv_t rmc;
 	t = calloc(1, sizeof(*t));
 
 	pthread_mutex_init(&t->mutex, NULL);
-	err = pthread_create(&t->worker, NULL, monitor_tod_status, t);
+	err = pthread_create(&t->recv_worker, NULL, monitor_recv_status, t);
 	if (err) {
-		printf("failed to create worker thread\n");
+		printf("failed to create recv_worker thread\n");
+		free(t);
+		return -1;
+	}
+	err = pthread_create(&t->adj_worker, NULL, monitor_adj_status, t);
+	if (err) {
+		printf("failed to create adj_worker thread\n");
 		free(t);
 		return -1;
 	}
@@ -264,9 +450,20 @@ int tod_send(void)
 	//1.读出phy的time count
 	//2.将count转换位tod格式
 	//3.创建线程不断的通过serial发送数据出去
-	//
+	struct tod *t;
 	int fd = -1;
-	char *data = "Hello World!";
+	int err;
+	char *nmea_data;
+	t = calloc(1, sizeof(*t));
+
+	pthread_mutex_init(&t->mutex, NULL);
+	err = pthread_create(&t->send_worker, NULL, monitor_send_status, t);
+	if (err) {
+		printf("failed to create worker thread\n");
+		free(t);
+		return -1;
+	}
+
 	while (true) {
 		if (fd == -1) {
 			fd = serial_open(SERIALPORT, BAUD, 0, 0);
@@ -276,9 +473,10 @@ int tod_send(void)
 				continue;
 			}
 		}
-		data = global_time_to_nmea();
-		write(fd, data, strlen(data));
-		sleep(1);		// wait for 1 second
+		if (t->is_valid) {
+			nmea_data = global_time_to_nmea();
+			write(fd, nmea_data, strlen(nmea_data));
+		}
 	}
 	close(fd);
 

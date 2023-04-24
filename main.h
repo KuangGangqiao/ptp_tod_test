@@ -27,9 +27,36 @@ typedef struct {
 	int64_t ns;
 } tmv_t;
 
+struct jl3xxx_pid {
+	float set_offset;	//定义设定值
+	float actual_offset;	//定义实际值
+	float err;		//定义偏差值
+	float err_last;		//定义上一个偏差值
+	float kp,ki,kd;		//定义比例、积分、微分系数
+	float expand;		//定义扩大系数（控制执行器的变量）
+	float integral;		//定义积分值
+	int pos_freq_offset;	//正向频偏
+	int neg_freq_offset;	//反向频偏
+	int pos_count;		//正向计数
+	int neg_count;		//反向计数
+};
+
+struct phy_adj {
+	enum tod_out_flag dir;
+	int offset;
+	int freq;
+	int (*freq_adj)(struct phy_adj *adj, int freq);
+	int (*offset_adj)(struct phy_adj *adj, int offset);
+	struct jl3xxx_pid pid;
+};
+
 struct tod {
 	enum tod_out_flag flag;
-	pthread_t worker;
+	pthread_t send_worker;
+	pthread_t recv_worker;
+	pthread_t adj_worker;
+	bool is_valid;
+	struct phy_adj adj;
 	/* Protects anonymous struct fields, below, from concurrent access. */
 	pthread_mutex_t mutex;
 
