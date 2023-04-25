@@ -404,7 +404,7 @@ static int phy_freq_adj(struct phy_adj *adj, int freq)
 
 static int phy_offset_adj(struct phy_adj *adj, int offset)
 {
-	return 0;
+	return jl3xxx_ptp_adjust_tod_time(ETH_NAME, adj->dir, offset);
 }
 
 static void tod_init(struct tod *t)
