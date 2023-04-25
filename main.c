@@ -246,8 +246,10 @@ static void *monitor_send_status(void *arg)
 
 	while (true) {
 		// TODO
+		pthread_mutex_lock(&t->mutex);
 		t->is_valid = 0;
-		usleep(100000);
+		pthread_mutex_unlock(&t->mutex);
+		usleep(1000000);
 	}
 }
 
@@ -476,6 +478,7 @@ int tod_send(void)
 		if (t->is_valid) {
 			nmea_data = global_time_to_nmea();
 			write(fd, nmea_data, strlen(nmea_data));
+			usleep(1000000); //wait isn't valid
 		}
 	}
 	close(fd);
