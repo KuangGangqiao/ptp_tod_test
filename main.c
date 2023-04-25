@@ -257,7 +257,10 @@ static void *monitor_adj_status(void *arg)
 {
 	struct tod *t = arg;
 	while (true) {
-		printf("adjadjadjadjadjadjadj\n");
+		printf("%s\n", __func__);
+		pthread_mutex_lock(&t->mutex);
+		t->adj.freq_adj(&t->adj, t->adj.freq);
+		pthread_mutex_unlock(&t->mutex);
 		usleep(100000);
 	}
 }
@@ -309,7 +312,7 @@ static void pid_init(struct jl3xxx_pid *pid) {
 		.ki = 1.2,	//ki * 150%
 		.kd = 0,	//kd * 30%
 	};
-	pid = &pid_cfg;
+	*pid = pid_cfg;
 }
 
 static int jl3xxx_ptp_adjust_tod_time(char *phydev, bool positive, int offset)
@@ -426,6 +429,8 @@ int tod_recv(void)
 	struct tod *t;
 	int err;
 	t = calloc(1, sizeof(*t));
+
+	tod_init(t);
 
 	pthread_mutex_init(&t->mutex, NULL);
 	err = pthread_create(&t->recv_worker, NULL, monitor_recv_status, t);
