@@ -253,13 +253,29 @@ static void *monitor_send_status(void *arg)
 	}
 }
 
+static int adj_state(struct tod *t) {
+	//TODO
+	switch (t->adj.state) {
+	case OFFSET_ADJ:
+		t->adj.offset_adj(&t->adj, t->adj.offset);
+		break;
+	case FREQ_ADJ:
+		t->adj.freq_adj(&t->adj, t->adj.freq);
+		break;
+	default:
+		printf("Free Run!\n");
+		break;
+	}
+	return 0;
+}
+
 static void *monitor_adj_status(void *arg)
 {
 	struct tod *t = arg;
 	while (true) {
 		printf("%s\n", __func__);
 		pthread_mutex_lock(&t->mutex);
-		t->adj.freq_adj(&t->adj, t->adj.freq);
+		adj_state(t);
 		pthread_mutex_unlock(&t->mutex);
 		usleep(100000);
 	}

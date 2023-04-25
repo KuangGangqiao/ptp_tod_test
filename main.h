@@ -23,6 +23,11 @@ enum tod_out_flag {
 	POSITIVE,
 };
 
+enum adj_state {
+	OFFSET_ADJ,
+	FREQ_ADJ,
+};
+
 typedef struct {
 	int64_t ns;
 } tmv_t;
@@ -43,6 +48,7 @@ struct jl3xxx_pid {
 
 struct phy_adj {
 	enum tod_out_flag dir;
+	enum adj_state state;
 	int offset;
 	int freq;
 	int (*freq_adj)(struct phy_adj *adj, int freq);
