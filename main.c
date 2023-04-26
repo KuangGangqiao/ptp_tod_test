@@ -11,6 +11,8 @@ typedef int16_t u16;
 typedef int32_t u32;
 typedef int64_t u64;
 
+#define BIT(n)		(1 << n)
+
 #define JL3XXX_DEVAD0	0
 #define JL3XXX_READ_PULS	0x308
 #define JL3XXX_READ_PULS_DATA	0x309
@@ -31,8 +33,12 @@ typedef int64_t u64;
 #define JL3XXX_PTP_TOD_LOD_PTR_WORD1	0x311
 #define JL3XXX_PTP_TOD_CTL0		0x312
 
-
-#define BIT(n)		(1 << n)
+#define JL3XXX_TX_ENABLE_IO_CFG		BIT(6)
+#define JL3XXX_EVENT_CAP_FORM		BIT(13)
+#define JL3XXX_MULTI_SYNC_MODE		BIT(2)
+#define JL3XXX_TRIG_GEN_AMT_WORD0	0x202
+#define JL3XXX_TRIG_GEN_AMT_WORD1	0x203
+#define JL3XXX_CAP_VALID		BIT(8)
 
 struct jl3xxx_tod_op {
 	u16 tod_busy;
@@ -94,12 +100,20 @@ static int jl3xxx_ptp_set_tod_time(u64 seconds, u32 nano_seconds)
 	//TOD load pointer low word
 	phy_c45_write(ETH_NAME, 0, 0x310, (tod_load_ptr & 0xffff));
 
-	phy_c45_write(ETH_NAME, JL3XXX_DEVAD0, JL3XXX_TOD_SEC_WORD0, tod_s & 0xffff);
-	phy_c45_write(ETH_NAME, JL3XXX_DEVAD0, JL3XXX_TOD_SEC_WORD1, (tod_s >> 16) & 0xffff);
-	phy_c45_write(ETH_NAME, JL3XXX_DEVAD0, JL3XXX_TOD_SEC_WORD2, (tod_s >> 32) & 0xffff);
-
-	phy_c45_write(ETH_NAME, JL3XXX_DEVAD0, JL3XXX_TOD_NS_WORD0, tod_ns & 0xffff);
-	phy_c45_write(ETH_NAME, JL3XXX_DEVAD0, JL3XXX_TOD_NS_WORD1, (tod_ns >> 16) & 0xffff);
+	if (seconds) {
+		phy_c45_write(ETH_NAME, JL3XXX_DEVAD0,
+			      JL3XXX_TOD_SEC_WORD0, tod_s & 0xffff);
+		phy_c45_write(ETH_NAME, JL3XXX_DEVAD0,
+			      JL3XXX_TOD_SEC_WORD1, (tod_s >> 16) & 0xffff);
+		phy_c45_write(ETH_NAME, JL3XXX_DEVAD0,
+			      JL3XXX_TOD_SEC_WORD2, (tod_s >> 32) & 0xffff);
+	}
+	if (nano_seconds) {
+		phy_c45_write(ETH_NAME, JL3XXX_DEVAD0,
+			      JL3XXX_TOD_NS_WORD0, tod_ns & 0xffff);
+		phy_c45_write(ETH_NAME, JL3XXX_DEVAD0,
+			      JL3XXX_TOD_NS_WORD1, (tod_ns >> 16) & 0xffff);
+	}
 
 	/* tod control config 0*/
 	phy_c45_write(ETH_NAME, 0, 0x312, tod_op_data(&ops));
@@ -118,24 +132,24 @@ static int jl3xxx_ptp_get_tod_time(u64 *seconds, u32 *nano_seconds)
 	/* config tod */
 	phy_c45_write(ETH_NAME, 0, 0x312, tod_op_data(&ops));
 
-	/* Read global time need command */
-	/* need fix mdio indirect */
-	phy_c45_write(ETH_NAME, JL3XXX_DEVAD0,
-		      JL3XXX_READ_PULS, 0x8f13);
-	ns_hi = phy_c45_read(ETH_NAME, JL3XXX_DEVAD0, JL3XXX_READ_PULS_DATA);
-	ns_lo = phy_c45_read(ETH_NAME, JL3XXX_DEVAD0, JL3XXX_READ_PULS_DATA);
-
-	phy_c45_write(ETH_NAME, JL3XXX_DEVAD0,
-		      JL3XXX_READ_PULS, 0x8f15);
-	s_hi = phy_c45_read(ETH_NAME, JL3XXX_DEVAD0, JL3XXX_READ_PULS_DATA);
-	s_me = phy_c45_read(ETH_NAME, JL3XXX_DEVAD0, JL3XXX_READ_PULS_DATA);
-	s_lo = phy_c45_read(ETH_NAME, JL3XXX_DEVAD0, JL3XXX_READ_PULS_DATA);
-
-	if (seconds)
-		(*seconds) = (s_hi << 32) | (s_me << 16) | s_lo;
-
-	if (nano_seconds)
+	if (nano_seconds) {
+		/* Read global time need command */
+		/* need fix mdio indirect */
+		phy_c45_write(ETH_NAME, JL3XXX_DEVAD0,
+			      JL3XXX_READ_PULS, 0x8f13);
+		ns_hi = phy_c45_read(ETH_NAME, JL3XXX_DEVAD0, JL3XXX_READ_PULS_DATA);
+		ns_lo = phy_c45_read(ETH_NAME, JL3XXX_DEVAD0, JL3XXX_READ_PULS_DATA);
 		(*nano_seconds) = (ns_hi << 16) | ns_lo;
+	}
+
+	if (seconds) {
+		phy_c45_write(ETH_NAME, JL3XXX_DEVAD0,
+			      JL3XXX_READ_PULS, 0x8f15);
+		s_hi = phy_c45_read(ETH_NAME, JL3XXX_DEVAD0, JL3XXX_READ_PULS_DATA);
+		s_me = phy_c45_read(ETH_NAME, JL3XXX_DEVAD0, JL3XXX_READ_PULS_DATA);
+		s_lo = phy_c45_read(ETH_NAME, JL3XXX_DEVAD0, JL3XXX_READ_PULS_DATA);
+		(*seconds) = (s_hi << 32) | (s_me << 16) | s_lo;
+	}
 
 	return 0;
 }
@@ -253,7 +267,8 @@ static void *monitor_send_status(void *arg)
 	}
 }
 
-static int adj_state(struct tod *t) {
+static int adj_state(struct tod *t)
+{
 	//TODO
 	switch (t->adj.state) {
 	case OFFSET_ADJ:
@@ -272,12 +287,43 @@ static int adj_state(struct tod *t) {
 static void *monitor_adj_status(void *arg)
 {
 	struct tod *t = arg;
+	struct jl3xxx_tod_op ops = {1, PTP_TOD_CAPTURE_TIMER, 0, 1, 0};
+	u32 ns_lo, ns_hi, nano_seconds;
+	u16 val = 0;
+
 	while (true) {
 		printf("%s\n", __func__);
 		pthread_mutex_lock(&t->mutex);
-		adj_state(t);
+		val = phy_c45_read(ETH_NAME, 0, 0x20a);
+		if (val & JL3XXX_CAP_VALID) {
+			/* config tod */
+			phy_c45_write(ETH_NAME, 0, 0x312, tod_op_data(&ops));
+
+			/* Read global time need command */
+			/* need fix mdio indirect */
+			phy_c45_write(ETH_NAME, JL3XXX_DEVAD0,
+				      JL3XXX_READ_PULS, 0x8e0a);
+			ns_hi = phy_c45_read(ETH_NAME, JL3XXX_DEVAD0,
+					     JL3XXX_READ_PULS_DATA);
+			ns_lo = phy_c45_read(ETH_NAME, JL3XXX_DEVAD0,
+					     JL3XXX_READ_PULS_DATA);
+			nano_seconds = (ns_hi << 16) | ns_lo;
+			phy_c45_write(ETH_NAME, 0, 0x20a,
+				      val & ~JL3XXX_CAP_VALID);
+			if (nano_seconds > 1000000000) {
+				t->adj.freq = nano_seconds - 1000000000;
+				t->adj.dir = NEGATIVE;
+			} else {
+				t->adj.freq = 1000000000 - nano_seconds;
+				t->adj.dir = POSITIVE;
+			}
+			usleep(10000);
+			adj_state(t);
+		} else {
+			printf("pps rise capture is not valid!\n");
+		}
 		pthread_mutex_unlock(&t->mutex);
-		usleep(100000);
+		usleep(1000000);
 	}
 }
 
@@ -416,6 +462,24 @@ static void pid_realize(struct phy_adj *adj, bool phase_adj, int ppm){
 	jl3xxx_ptp_adjust_tod_freq(phase_adj, (int)pid->actual_offset);
 }
 
+static void tod_sync_to_pps_init(void)
+{
+	u16 val;
+
+	val = phy_c45_read(ETH_NAME, 0, 0x330);
+	val = val | JL3XXX_TX_ENABLE_IO_CFG;
+	phy_c45_write(ETH_NAME, 0, 0x330, val);
+
+	val = phy_c45_read(ETH_NAME, 0, 0x20a);
+	val = val | JL3XXX_EVENT_CAP_FORM;
+	phy_c45_write(ETH_NAME, 0, 0x20a, val);
+
+	val = phy_c45_read(ETH_NAME, 0, 0x200);
+	val = val | JL3XXX_MULTI_SYNC_MODE;
+	phy_c45_write(ETH_NAME, 0, 0x200, val);
+
+}
+
 static int phy_freq_adj(struct phy_adj *adj, int freq)
 {
 	pid_realize(adj, adj->dir, freq);
@@ -433,6 +497,8 @@ static void tod_init(struct tod *t)
 	pid_init(&t->adj.pid);
 	t->adj.freq_adj = phy_freq_adj;
 	t->adj.offset_adj = phy_offset_adj;
+	t->adj.state = FREQ_ADJ;
+	tod_sync_to_pps_init();
 }
 
 int tod_recv(void)
@@ -463,7 +529,7 @@ int tod_recv(void)
 	}
 	while(true) {
 		jl3xxx_ptp_set_tod_time(t->rmc_utctime.tv_sec, 0);
-		sleep(4);
+		sleep(2);
 	}
 }
 
