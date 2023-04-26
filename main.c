@@ -259,17 +259,16 @@ static void *monitor_send_status(void *arg)
 	struct tod *t = arg;
 
 	while (true) {
-		// TODO
 		pthread_mutex_lock(&t->mutex);
 		t->is_valid = 0;
 		pthread_mutex_unlock(&t->mutex);
 		usleep(1000000);
 	}
+	return NULL;
 }
 
 static int adj_state(struct tod *t)
 {
-	//TODO
 	switch (t->adj.state) {
 	case OFFSET_ADJ:
 		t->adj.offset_adj(&t->adj, t->adj.offset);
@@ -310,11 +309,11 @@ static void *monitor_adj_status(void *arg)
 			nano_seconds = (ns_hi << 16) | ns_lo;
 			phy_c45_write(ETH_NAME, 0, 0x20a,
 				      val & ~JL3XXX_CAP_VALID);
-			if (nano_seconds > 1000000000) {
-				t->adj.freq = nano_seconds - 1000000000;
+			if (nano_seconds > 500000000) {
+				t->adj.freq = nano_seconds;
 				t->adj.dir = NEGATIVE;
 			} else {
-				t->adj.freq = 1000000000 - nano_seconds;
+				t->adj.freq = nano_seconds;
 				t->adj.dir = POSITIVE;
 			}
 			usleep(10000);
@@ -325,9 +324,10 @@ static void *monitor_adj_status(void *arg)
 		pthread_mutex_unlock(&t->mutex);
 		usleep(1000000);
 	}
+	return NULL;
 }
 
-static int jl3xxx_ptp_adjust_tod_freq(bool positive, int ppm)
+static int jl3xxx_ptp_adjust_tod_freq(enum tod_out_flag positive, int ppm)
 {
 	struct jl3xxx_tod_op ops = {1, PTP_TOD_STORE_COMP, 2, 1, 0};
 	int freq, tod_compensation;
@@ -339,8 +339,8 @@ static int jl3xxx_ptp_adjust_tod_freq(bool positive, int ppm)
 
 	/*TODO */
 	//tod_compensation = freq | 0x80000000;
-	if (positive)
-		tod_compensation = freq;
+	if (positive == NEGATIVE)
+		tod_compensation = freq | 0x80000000;
 	else
 		tod_compensation = freq;
 
@@ -442,7 +442,8 @@ static int jl3xxx_ptp_adjust_tod_time(char *phydev, bool positive, int offset)
 	return 0;
 }
 
-static void pid_realize(struct phy_adj *adj, bool phase_adj, int ppm){
+static void pid_realize(struct phy_adj *adj,
+			enum tod_out_flag phase_adj, int ppm){
 	struct jl3xxx_pid *pid = &adj->pid;
 
 	pid->actual_offset = ppm;

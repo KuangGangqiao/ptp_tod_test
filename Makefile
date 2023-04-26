@@ -1,4 +1,4 @@
-FLAG = -lpthread
+FLAG = -lpthread -Wall
 OBJ = main.c \
 	./mdio/mdio-tool.c \
 	./serial/serial.c \

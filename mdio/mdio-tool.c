@@ -70,7 +70,7 @@ static int mdio45_write(int skfd, int dev, int addr, int val)
 	int regnum = (MII_ADDR_C45 | (dev << 16) | (addr & 0xffff));
 	return mdio_write(skfd, regnum, val);
 }
-
+#if 0
 static void phy_write(int skfd, int argc, char **argv)
 {
 	int dev, addr, val;
@@ -100,7 +100,7 @@ static int phy_read(int skfd, int argc, char **argv)
 
 	return retval;
 }
-
+#endif
 int phy_c45_read(char *eth_name, int dev, int addr)
 {
 	int retval;

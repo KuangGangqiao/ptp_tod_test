@@ -174,7 +174,7 @@ static int tod_scan_rmc(struct nmea_parser *np, struct nmea_rmc *result)
 	return 0;
 
 }
-
+#if 0
 static int nmea_scan_rmc(struct nmea_parser *np, struct nmea_rmc *result)
 {
 	int cnt, i, msec = 0;
@@ -228,7 +228,7 @@ static int nmea_scan_rmc(struct nmea_parser *np, struct nmea_rmc *result)
 	result->fix_valid = status == 'A' ? true : false;
 	return 0;
 }
-
+#endif
 int nmea_parse(struct nmea_parser *np, const char *ptr, int buflen,
 	       struct nmea_rmc *result, int *parsed)
 {
