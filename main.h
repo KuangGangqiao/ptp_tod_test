@@ -26,6 +26,7 @@ enum tod_out_flag {
 enum adj_state {
 	OFFSET_ADJ,
 	FREQ_ADJ,
+	NONE_ADJ,
 };
 
 typedef struct {
@@ -44,16 +45,21 @@ struct jl3xxx_pid {
 	int neg_freq_offset;	//反向频偏
 	int pos_count;		//正向计数
 	int neg_count;		//反向计数
+	bool pos_flag;
 };
 
 struct phy_adj {
-	enum tod_out_flag dir;
+	enum tod_out_flag freq_dir;
+	enum tod_out_flag offset_dir;
 	enum adj_state state;
+	int last_freq;
+	int last_offset;
 	int offset;
 	int freq;
 	int (*freq_adj)(struct phy_adj *adj, int freq);
 	int (*offset_adj)(struct phy_adj *adj, int offset);
 	struct jl3xxx_pid pid;
+	struct jl3xxx_pid neg_pid;
 };
 
 struct tod {

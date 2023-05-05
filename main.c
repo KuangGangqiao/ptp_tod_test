@@ -13,6 +13,8 @@ typedef int64_t u64;
 
 #define BIT(n)		(1 << n)
 
+#define DEBUG		0
+
 #define JL3XXX_DEVAD0	0
 #define JL3XXX_READ_PULS	0x308
 #define JL3XXX_READ_PULS_DATA	0x309
@@ -34,7 +36,7 @@ typedef int64_t u64;
 #define JL3XXX_PTP_TOD_CTL0		0x312
 
 #define JL3XXX_TX_ENABLE_IO_CFG		BIT(6)
-#define JL3XXX_EVENT_CAP_FORM		BIT(13)
+#define JL3XXX_EVENT_CAP_FORM		BIT(12)
 #define JL3XXX_MULTI_SYNC_MODE		BIT(2)
 #define JL3XXX_TRIG_GEN_AMT_WORD0	0x202
 #define JL3XXX_TRIG_GEN_AMT_WORD1	0x203
@@ -223,7 +225,7 @@ static void *monitor_recv_status(void *arg)
 				t->local_utctime.tv_sec = ntx.time.tv_sec; //t2: utc时间s
 				t->local_utctime.tv_nsec = ntx.time.tv_usec; //t2: utc时间ns
 				t->rmc_utctime = rmc.ts; //t3 远端卫星时间t3
-				fprintf(stderr, "xxxx: %ld\n", rmc.ts.tv_sec);
+				//fprintf(stderr, "utctime: %ld\n", t->rmc_utctime.tv_sec);
 				t->rmc_fix_valid = rmc.fix_valid;
 				pthread_mutex_unlock(&t->mutex);
 			}
@@ -267,14 +269,61 @@ static void *monitor_send_status(void *arg)
 	return NULL;
 }
 
+static int pps_rise_abs_offset(int ns)
+{
+	if (ns < 500000000) {
+		return ns;
+	} else {
+		return 1000000000 - ns;
+	}
+}
+
 static int adj_state(struct tod *t)
 {
 	switch (t->adj.state) {
 	case OFFSET_ADJ:
+#if DEBUG
+		printf("++++OFFSET_ADJ+++++: %d --- %d\n",
+			pps_rise_abs_offset(t->adj.offset), t->adj.offset);
+#endif
+		if (pps_rise_abs_offset(t->adj.offset) >
+		    pps_rise_abs_offset(t->adj.last_offset))
+			t->adj.offset_dir = NEGATIVE;
+		else
+			t->adj.offset_dir = POSITIVE;
+
 		t->adj.offset_adj(&t->adj, t->adj.offset);
+		t->adj.last_offset = t->adj.offset;
+		if (pps_rise_abs_offset(t->adj.offset) < 50000)
+			t->adj.state = FREQ_ADJ;
 		break;
 	case FREQ_ADJ:
-		t->adj.freq_adj(&t->adj, t->adj.freq);
+#if DEBUG
+		printf("++++FREQ_ADJ+++++: %d --- %d\n",
+			pps_rise_abs_offset(t->adj.freq), t->adj.freq);
+#endif
+		if (pps_rise_abs_offset(t->adj.freq) <
+		    pps_rise_abs_offset(t->adj.last_freq)) {
+			t->adj.freq_dir = POSITIVE;
+		} else {
+			t->adj.freq_dir = POSITIVE;
+		}
+#if 1
+		if (t->adj.freq < 500000000) {
+			t->adj.pid.pos_flag = true;
+		} else {
+			t->adj.pid.pos_flag = false;
+		}
+#endif
+		t->adj.freq_adj(&t->adj, pps_rise_abs_offset(t->adj.freq));
+		t->adj.last_freq = t->adj.freq;
+
+		if (pps_rise_abs_offset(t->adj.freq) > 1000000) {
+			t->adj.freq_adj(&t->adj, 0);
+			t->adj.state = OFFSET_ADJ;
+		}
+		break;
+	case NONE_ADJ:
 		break;
 	default:
 		printf("Free Run!\n");
@@ -291,7 +340,6 @@ static void *monitor_adj_status(void *arg)
 	u16 val = 0;
 
 	while (true) {
-		printf("%s\n", __func__);
 		pthread_mutex_lock(&t->mutex);
 		val = phy_c45_read(ETH_NAME, 0, 0x20a);
 		if (val & JL3XXX_CAP_VALID) {
@@ -309,14 +357,9 @@ static void *monitor_adj_status(void *arg)
 			nano_seconds = (ns_hi << 16) | ns_lo;
 			phy_c45_write(ETH_NAME, 0, 0x20a,
 				      val & ~JL3XXX_CAP_VALID);
-			if (nano_seconds > 500000000) {
-				t->adj.freq = nano_seconds;
-				t->adj.dir = NEGATIVE;
-			} else {
-				t->adj.freq = nano_seconds;
-				t->adj.dir = POSITIVE;
-			}
-			usleep(10000);
+			// inti adj state
+			t->adj.freq = nano_seconds;
+			t->adj.offset = nano_seconds;
 			adj_state(t);
 		} else {
 			printf("pps rise capture is not valid!\n");
@@ -339,10 +382,17 @@ static int jl3xxx_ptp_adjust_tod_freq(enum tod_out_flag positive, int ppm)
 
 	/*TODO */
 	//tod_compensation = freq | 0x80000000;
-	if (positive == NEGATIVE)
+	if (positive == NEGATIVE) {
 		tod_compensation = freq | 0x80000000;
-	else
+#if DEBUG
+		printf("negtive!!!\n");
+#endif
+	} else {
 		tod_compensation = freq;
+#if DEBUG
+		printf("postive!!!\n");
+#endif
+	}
 
 	phy_c45_write(ETH_NAME, 0, JL3XXX_TOD_COMP_WORD0,
 		      tod_compensation & 0xffff);
@@ -370,9 +420,9 @@ static void pid_init(struct jl3xxx_pid *pid) {
 		//kp=38,  kp(60%~70%) = (22 ~ 26.5)
 		//ki=0.8, ki(150%~180%) = (1.2 ~ 1.45)
 		//kd=0, kd(30%~50%) = (0)
-		.kp = 22,	//kp * 60%
+		.kp = 10,	//kp * 60%
 		.ki = 1.2,	//ki * 150%
-		.kd = 0,	//kd * 30%
+		.kd = 0.2,	//kd * 30%
 	};
 	*pid = pid_cfg;
 }
@@ -448,18 +498,26 @@ static void pid_realize(struct phy_adj *adj,
 
 	pid->actual_offset = ppm;
 	pid->err = pid->set_offset - pid->actual_offset;
-	printf("pid_err: %d\n", (int)pid->err);
-	pid->integral += pid->err;
-	printf("pid_integral: %d\n", (int)pid->integral);
-	printf("test: %d", (int)(10 * pid->kp));
-	pid->expand = pid->kp * pid->err + pid->ki * pid->integral +
-		       pid->kd * (pid->err - pid->err_last);
-	printf("pid_expand: %d\n", (int)pid->expand);
+	if (pid->pos_flag) {
+#if DEBUG
+		printf("pos_flag: true\n");
+#endif
+		pid->integral -= pid->err;
+		pid->expand = -pid->kp * pid->err + pid->ki * pid->integral -
+			       pid->kd * (pid->err - pid->err_last);
+	} else {
+#if DEBUG
+		printf("pos_flag: false\n");
+#endif
+		pid->integral += pid->err;
+		pid->expand = pid->kp * pid->err + pid->ki * pid->integral +
+			       pid->kd * (pid->err - pid->err_last);
+	}
 	pid->err_last = pid->err;
 	pid->actual_offset = pid->expand * 1;
-
-	printf("ppm: %d", ppm);
+#if DEBUG
 	printf("pid_set_offset: %d\n", (int)pid->actual_offset);
+#endif
 	jl3xxx_ptp_adjust_tod_freq(phase_adj, (int)pid->actual_offset);
 }
 
@@ -469,28 +527,42 @@ static void tod_sync_to_pps_init(void)
 
 	val = phy_c45_read(ETH_NAME, 0, 0x330);
 	val = val | JL3XXX_TX_ENABLE_IO_CFG;
+#if 1
+	val = val | BIT(7); //carelly!!!
+#else
+	val = val & ~BIT(7); //carelly!!!
+#endif
 	phy_c45_write(ETH_NAME, 0, 0x330, val);
 
 	val = phy_c45_read(ETH_NAME, 0, 0x20a);
 	val = val | JL3XXX_EVENT_CAP_FORM;
+	val = val & ~BIT(13);
 	phy_c45_write(ETH_NAME, 0, 0x20a, val);
 
 	val = phy_c45_read(ETH_NAME, 0, 0x200);
 	val = val | JL3XXX_MULTI_SYNC_MODE;
 	phy_c45_write(ETH_NAME, 0, 0x200, val);
-
 }
 
 static int phy_freq_adj(struct phy_adj *adj, int freq)
 {
-	pid_realize(adj, adj->dir, freq);
+	pid_realize(adj, adj->freq_dir, freq);
 
 	return 0;
 }
 
 static int phy_offset_adj(struct phy_adj *adj, int offset)
 {
-	return jl3xxx_ptp_adjust_tod_time(ETH_NAME, adj->dir, offset);
+	int ppm;
+
+	if (adj->offset_dir == NEGATIVE)
+		ppm = -offset;
+	else if (adj->offset_dir == POSITIVE)
+		ppm = offset;
+	else
+		printf("error enum!\n");
+
+	return jl3xxx_ptp_adjust_tod_time(ETH_NAME, adj->offset_dir, ppm);
 }
 
 static void tod_init(struct tod *t)
@@ -498,8 +570,9 @@ static void tod_init(struct tod *t)
 	pid_init(&t->adj.pid);
 	t->adj.freq_adj = phy_freq_adj;
 	t->adj.offset_adj = phy_offset_adj;
-	t->adj.state = FREQ_ADJ;
+	t->adj.state = OFFSET_ADJ;
 	tod_sync_to_pps_init();
+	t->adj.freq_adj(&t->adj, 0);
 }
 
 int tod_recv(void)
@@ -514,7 +587,6 @@ int tod_recv(void)
 	t = calloc(1, sizeof(*t));
 
 	tod_init(t);
-
 	pthread_mutex_init(&t->mutex, NULL);
 	err = pthread_create(&t->recv_worker, NULL, monitor_recv_status, t);
 	if (err) {
@@ -529,9 +601,14 @@ int tod_recv(void)
 		return -1;
 	}
 	while(true) {
+#if 1
+		sleep(5);
+		pthread_mutex_lock(&t->mutex);
 		jl3xxx_ptp_set_tod_time(t->rmc_utctime.tv_sec, 0);
-		sleep(2);
+		pthread_mutex_unlock(&t->mutex);
+#endif
 	}
+	return 0;
 }
 
 int tod_send(void)
