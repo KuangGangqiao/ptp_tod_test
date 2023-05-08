@@ -38,6 +38,7 @@ struct jl3xxx_pid {
 	float actual_offset;	//定义实际值
 	float err;		//定义偏差值
 	float err_last;		//定义上一个偏差值
+	float err_prev;		//定义上上个偏差值
 	float kp,ki,kd;		//定义比例、积分、微分系数
 	float expand;		//定义扩大系数（控制执行器的变量）
 	float integral;		//定义积分值
@@ -46,6 +47,7 @@ struct jl3xxx_pid {
 	int pos_count;		//正向计数
 	int neg_count;		//反向计数
 	bool pos_flag;
+	bool init_flag;		//判断初始频偏的方向标志
 };
 
 struct phy_adj {
