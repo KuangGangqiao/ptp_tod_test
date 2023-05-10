@@ -46,6 +46,7 @@ struct jl3xxx_pid {
 	int neg_freq_offset;	//反向频偏
 	int pos_count;		//正向计数
 	int neg_count;		//反向计数
+	int free_run_count;	//自由运行计数
 	bool pos_flag;
 	bool init_flag;		//判断初始频偏的方向标志
 };

@@ -290,7 +290,9 @@ static int pps_rise_abs_offset(int ns)
 		return 1000000000 - ns;
 	}
 }
-
+#define FREE_RUN_COUNT	10
+#define ADJ_OFFSET_TO_FREQ	50000
+#define ADJ_FREQ_TO_OFFSET	1000000
 static int adj_state(struct tod *t)
 {
 	switch (t->adj.state) {
@@ -307,7 +309,7 @@ static int adj_state(struct tod *t)
 
 		t->adj.offset_adj(&t->adj, t->adj.offset);
 		t->adj.last_offset = t->adj.offset;
-		if (pps_rise_abs_offset(t->adj.offset) < 50000)
+		if (pps_rise_abs_offset(t->adj.offset) < ADJ_OFFSET_TO_FREQ)
 			t->adj.state = FREQ_ADJ;
 		break;
 	case FREQ_ADJ:
@@ -315,43 +317,40 @@ static int adj_state(struct tod *t)
 		printf("++++FREQ_ADJ+++++: %d --- %d\n",
 			pps_rise_abs_offset(t->adj.freq), t->adj.freq);
 #endif
-#if 0
-		if (pps_rise_abs_offset(t->adj.freq) <
-		    pps_rise_abs_offset(t->adj.last_freq)) {
-			t->adj.freq_dir = POSITIVE;
+#if 1
+		if (t->adj.freq < 500000000) {
+			t->adj.pid.pos_flag = true;
 		} else {
-			t->adj.freq_dir = POSITIVE;
+			t->adj.pid.pos_flag = false;
 		}
 #endif
-#if 0
-		// only exce one times
+		if (t->adj.pid.free_run_count < FREE_RUN_COUNT) {
+#if DEBUG
+			printf("free_run_count: %d\n", t->adj.pid.free_run_count);
+#endif
+			if (pps_rise_abs_offset(t->adj.last_freq) <
+			    pps_rise_abs_offset(t->adj.freq))
+				t->adj.pid.pos_count++;
+			else
+				t->adj.pid.neg_count++;
+
+			t->adj.last_freq = t->adj.freq;
+			t->adj.pid.free_run_count++;
+			break;
+		}
+
 		if (!t->adj.pid.init_flag) {
-			if (t->adj.freq > 500000000)
+			if ((t->adj.pid.pos_count > FREE_RUN_COUNT/2) &&
+			     !t->adj.pid.pos_flag)
 				t->adj.freq_dir = POSITIVE;
 			else
 				t->adj.freq_dir = NEGATIVE;
 			t->adj.pid.init_flag = true;
 		}
-#else
-		if (t->adj.freq > 500000000) {
-			t->adj.freq_dir = POSITIVE;
-			//t->adj.freq_dir = NEGATIVE;
-		} else {
-			t->adj.freq_dir = POSITIVE;
-		}
-#endif
-#if 1
-		if (t->adj.freq < 500000000) {
-			t->adj.pid.pos_flag = true;
-			//t->adj.pid.pos_flag = false;
-		} else {
-			t->adj.pid.pos_flag = false;
-		}
-#endif
 		t->adj.freq_adj(&t->adj, pps_rise_abs_offset(t->adj.freq));
 		t->adj.last_freq = t->adj.freq;
 
-		if (pps_rise_abs_offset(t->adj.freq) > 1000000) {
+		if (pps_rise_abs_offset(t->adj.freq) > ADJ_FREQ_TO_OFFSET) {
 			t->adj.freq_adj(&t->adj, 0);
 			t->adj.state = OFFSET_ADJ;
 		}
@@ -574,10 +573,6 @@ static void pid_realize(struct phy_adj *adj,
 	pid->actual_offset = pid->expand * 1;
 #if DEBUG
 	printf("pid_set_offset: %d\n", (int)pid->actual_offset);
-#endif
-#if 0
-	pid->actual_offset = 4000;
-	phase_adj = NEGATIVE;
 #endif
 
 	jl3xxx_ptp_adjust_tod_freq(phase_adj, (int)pid->actual_offset);
