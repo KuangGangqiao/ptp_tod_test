@@ -290,9 +290,29 @@ static int pps_rise_abs_offset(int ns)
 		return 1000000000 - ns;
 	}
 }
+
 #define FREE_RUN_COUNT	10
 #define ADJ_OFFSET_TO_FREQ	50000
 #define ADJ_FREQ_TO_OFFSET	1000000
+static int check_clock_freq(struct tod *t)
+{
+	if (t->adj.pid.free_run_count < FREE_RUN_COUNT) {
+#if DEBUG
+		printf("free_run_count: %d\n", t->adj.pid.free_run_count);
+#endif
+		if (pps_rise_abs_offset(t->adj.last_freq) <
+		    pps_rise_abs_offset(t->adj.freq))
+			t->adj.pid.pos_count++;
+		else
+			t->adj.pid.neg_count++;
+
+		t->adj.last_freq = t->adj.freq;
+		t->adj.pid.free_run_count++;
+		return 1;
+	}
+	return 0;
+}
+
 static int adj_state(struct tod *t)
 {
 	switch (t->adj.state) {
@@ -324,20 +344,8 @@ static int adj_state(struct tod *t)
 			t->adj.pid.pos_flag = false;
 		}
 #endif
-		if (t->adj.pid.free_run_count < FREE_RUN_COUNT) {
-#if DEBUG
-			printf("free_run_count: %d\n", t->adj.pid.free_run_count);
-#endif
-			if (pps_rise_abs_offset(t->adj.last_freq) <
-			    pps_rise_abs_offset(t->adj.freq))
-				t->adj.pid.pos_count++;
-			else
-				t->adj.pid.neg_count++;
-
-			t->adj.last_freq = t->adj.freq;
-			t->adj.pid.free_run_count++;
+		if (check_clock_freq(t))
 			break;
-		}
 
 		if (!t->adj.pid.init_flag) {
 			if ((t->adj.pid.pos_count > FREE_RUN_COUNT/2) &&
