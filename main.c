@@ -676,7 +676,7 @@ int tod_recv(void)
 		pthread_mutex_lock(&t->mutex);
 		jl3xxx_ptp_set_pps_seconds(t->rmc_utctime.tv_sec);
 		pthread_mutex_unlock(&t->mutex);
-		sleep(1);
+		sleep(2);
 	}
 	return 0;
 }
