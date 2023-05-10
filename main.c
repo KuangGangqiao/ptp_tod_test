@@ -554,23 +554,22 @@ static void pid_realize(struct phy_adj *adj,
 			enum tod_out_flag phase_adj, int ppm){
 	struct jl3xxx_pid *pid = &adj->pid;
 
-	pid->actual_offset = ppm;
-	pid->err = pid->set_offset - pid->actual_offset;
 	if (pid->pos_flag) {
 #if DEBUG
 		printf("pos_flag: true\n");
 #endif
-		pid->integral -= pid->err;
-		pid->expand = -pid->kp * pid->err + pid->ki * pid->integral -
-			       pid->kd * (pid->err - pid->err_last);
+		ppm = -ppm;
 	} else {
 #if DEBUG
+		ppm = ppm;
 		printf("pos_flag: false\n");
 #endif
-		pid->integral += pid->err;
-		pid->expand = pid->kp * pid->err + pid->ki * pid->integral +
-			       pid->kd * (pid->err - pid->err_last);
 	}
+	pid->actual_offset = ppm;
+	pid->err = pid->set_offset - pid->actual_offset;
+	pid->integral += pid->err;
+	pid->expand = pid->kp * pid->err + pid->ki * pid->integral +
+		       pid->kd * (pid->err - pid->err_last);
 	pid->err_last = pid->err;
 	pid->actual_offset = pid->expand * 1;
 #if DEBUG
