@@ -126,6 +126,18 @@ static int jl3xxx_ptp_set_tod_time(u64 seconds, u32 nano_seconds)
 	return 0;
 }
 
+static int jl3xxx_ptp_set_pps_seconds(u64 tod_s)
+{
+	phy_c45_write(ETH_NAME, JL3XXX_DEVAD0,
+		      JL3XXX_TOD_SEC_WORD0, tod_s & 0xffff);
+	phy_c45_write(ETH_NAME, JL3XXX_DEVAD0,
+		      JL3XXX_TOD_SEC_WORD1, (tod_s >> 16) & 0xffff);
+	phy_c45_write(ETH_NAME, JL3XXX_DEVAD0,
+		      JL3XXX_TOD_SEC_WORD2, (tod_s >> 32) & 0xffff);
+
+	return 0;
+}
+
 static int jl3xxx_ptp_get_tod_time(u64 *seconds, u32 *nano_seconds)
 {
 	struct jl3xxx_tod_op ops = {1, PTP_TOD_CAPTURE_TIMER, 0, 1, 0};
@@ -661,12 +673,10 @@ int tod_recv(void)
 		return -1;
 	}
 	while(true) {
-#if 0
-		sleep(3);
 		pthread_mutex_lock(&t->mutex);
-		jl3xxx_ptp_set_tod_time(t->rmc_utctime.tv_sec, 0);
+		jl3xxx_ptp_set_pps_seconds(t->rmc_utctime.tv_sec);
 		pthread_mutex_unlock(&t->mutex);
-#endif
+		sleep(1);
 	}
 	return 0;
 }
