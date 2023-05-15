@@ -35,8 +35,6 @@ typedef int64_t u64;
 #define JL3XXX_PTP_TOD_LOD_PTR_WORD1	0x311
 #define JL3XXX_PTP_TOD_CTL0		0x312
 
-#define JL3XXX_TX_ENABLE_IO_CFG		BIT(6)
-#define JL3XXX_EVENT_CAP_FORM		BIT(12)
 #define JL3XXX_PPS_SYNC_MODE		BIT(11)
 #define JL3XXX_MULTI_SYNC_MODE		BIT(2)
 #define JL3XXX_TRIG_GEN_AMT_WORD0	0x202
@@ -591,28 +589,42 @@ static void tod_sync_to_pps_init(void)
 	u16 val;
 
 	val = phy_c45_read(ETH_NAME, 0, 0x330);
-	val = val | JL3XXX_TX_ENABLE_IO_CFG;
-#if 1
-	val = val | BIT(7); //carelly!!!
-#else
-	val = val & ~BIT(7); //carelly!!!
-#endif
+	val = val | BIT(6);
+	val = val | BIT(7);
 	phy_c45_write(ETH_NAME, 0, 0x330, val);
 
 	val = phy_c45_read(ETH_NAME, 0, 0x20a);
-	val = val | JL3XXX_EVENT_CAP_FORM;
+	val = val | BIT(12);
 	val = val & ~BIT(13);
 	phy_c45_write(ETH_NAME, 0, 0x20a, val);
 
 	val = phy_c45_read(ETH_NAME, 0, 0x200);
-#if 0
-	val = val | JL3XXX_MULTI_SYNC_MODE;
-	val = val & ~JL3XXX_PPS_SYNC_MODE;
-#else
-
 	val = val & ~JL3XXX_MULTI_SYNC_MODE;
 	val = val | JL3XXX_PPS_SYNC_MODE;
-#endif
+	phy_c45_write(ETH_NAME, 0, 0x200, val);
+}
+
+/*  Test 10MHz(100ns) generate clock of ToD compensated Timer */
+static void tai_trig_gen_init(void)
+{
+	u16 val;
+
+	val = phy_c45_read(ETH_NAME, 0, 0x330);
+	val = val | BIT(3);
+	val = val | BIT(4);
+	val = val & ~BIT(5);
+	phy_c45_write(ETH_NAME, 0, 0x330, val);
+
+	phy_c45_write(ETH_NAME, 0, 0x202, 0);
+	phy_c45_write(ETH_NAME, 0, 0x203, 100);
+
+	phy_c45_write(ETH_NAME, 0, 0x31e, 100);
+	phy_c45_write(ETH_NAME, 0, 0x208, 0);
+	phy_c45_write(ETH_NAME, 0, 0x209, 5000);
+
+	val = phy_c45_read(ETH_NAME, 0, 0x200);
+	val = val | BIT(0);
+	val = val | BIT(11);
 	phy_c45_write(ETH_NAME, 0, 0x200, val);
 }
 
@@ -645,6 +657,7 @@ static void tod_init(struct tod *t)
 	t->adj.offset_adj = phy_offset_adj;
 	t->adj.state = OFFSET_ADJ;
 	tod_sync_to_pps_init();
+	tai_trig_gen_init();
 	t->adj.freq_adj(&t->adj, 0);
 	t->adj.pid.init_flag = false;
 }
