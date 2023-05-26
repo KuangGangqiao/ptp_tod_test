@@ -331,7 +331,7 @@ static int adj_state(struct tod *t)
 		printf("++++OFFSET_ADJ+++++: %d --- %d\n",
 			pps_rise_abs_offset(t->adj.offset), t->adj.offset);
 #endif
-#if 0
+#if 1
 		if (pps_rise_abs_offset(t->adj.offset) >
 		    pps_rise_abs_offset(t->adj.last_offset))
 			t->adj.offset_dir = NEGATIVE;
@@ -598,92 +598,34 @@ static void pid_realize(struct phy_adj *adj,
 	jl3xxx_ptp_adjust_tod_freq(phase_adj, (int)pid->actual_offset);
 }
 
-static void tod_sync_to_pps_init(void)
+static void tod_pps_rise_plus_init(bool open)
 {
 	u16 val;
 
-	val = phy_c45_read(ETH_NAME, 0, 0x330);
-	val = val | BIT(6);
-	val = val | BIT(7);
-	phy_c45_write(ETH_NAME, 0, 0x330, val);
+	if (open) {
+		val = phy_c45_read(ETH_NAME, 0, 0x205);
+		val = val | BIT(8);
+		val = val | BIT(9);
+		val = val | BIT(10);
 
-	val = phy_c45_read(ETH_NAME, 0, 0x20a);
-	val = val | BIT(12);
-	val = val & ~BIT(13);
-	phy_c45_write(ETH_NAME, 0, 0x20a, val);
+		val = val | BIT(12);
+		val = val | BIT(13);
+		val = val | BIT(14);
+		val = val | BIT(15);
+		phy_c45_write(ETH_NAME, 0, 0x205, val);
+	} else {
+		val = phy_c45_read(ETH_NAME, 0, 0x205);
+		val = val & ~BIT(8);
+		val = val & ~BIT(9);
+		val = val & ~BIT(10);
 
-	val = phy_c45_read(ETH_NAME, 0, 0x200);
-	val = val & ~JL3XXX_MULTI_SYNC_MODE;
-	val = val | JL3XXX_PPS_SYNC_MODE;
-	phy_c45_write(ETH_NAME, 0, 0x200, val);
-}
+		val = val & ~BIT(12);
+		val = val & ~BIT(13);
+		val = val & ~BIT(14);
+		val = val & ~BIT(15);
+		phy_c45_write(ETH_NAME, 0, 0x205, val);
+	}
 
-static void tod_and_pps_out_init(void)
-{
-	u16 val;
-
-	val = phy_c45_read(ETH_NAME, 0, 0x330);
-	//val = val & ~BIT(6);
-	//val = val | BIT(7);
-
-	val = val | BIT(3);
-	val = val | BIT(4);
-	val = val & ~BIT(5);
-	phy_c45_write(ETH_NAME, 0, 0x330, val);
-
-	val = phy_c45_read(ETH_NAME, 0, 0x20a);
-	val = val | BIT(12);
-	val = val & ~BIT(13);
-	phy_c45_write(ETH_NAME, 0, 0x20a, val);
-
-	val = phy_c45_read(ETH_NAME, 0, 0x200);
-	val = val & ~JL3XXX_MULTI_SYNC_MODE;
-	val = val | JL3XXX_PPS_SYNC_MODE;
-	val = val | BIT(9);
-	phy_c45_write(ETH_NAME, 0, 0x200, val);
-}
-
-/*  Test 10MHz(100ns) generate clock of ToD compensated Timer */
-static void tai_trig_gen_init(void)
-{
-	u16 val;
-
-	phy_c45_write(ETH_NAME, 0, 0x202, 0);
-	phy_c45_write(ETH_NAME, 0, 0x203, 100);
-
-	val = phy_c45_read(ETH_NAME, 0, 0x200);
-	val = val | BIT(0);
-#if 0
-	val = val & ~BIT(1);
-#else
-	val = val | BIT(1);
-#endif
-#if 0
-	val = val & ~BIT(11);
-#else
-	val = val | BIT(11);
-#endif
-	phy_c45_write(ETH_NAME, 0, 0x200, val);
-
-
-	val = phy_c45_read(ETH_NAME, 0, 0x200);
-	printf("test_log0: 0x%x\n", val);
-}
-
-static void tod_pps_rise_plus_init(void)
-{
-	u16 val;
-
-	val = phy_c45_read(ETH_NAME, 0, 0x205);
-	val = val | BIT(8);
-	val = val | BIT(9);
-	val = val | BIT(10);
-
-	val = val | BIT(12);
-	val = val | BIT(13);
-	val = val | BIT(14);
-	val = val | BIT(15);
-	phy_c45_write(ETH_NAME, 0, 0x205, val);
 }
 
 static int phy_freq_adj(struct phy_adj *adj, int freq)
@@ -708,38 +650,68 @@ static int phy_offset_adj(struct phy_adj *adj, int offset)
 	return jl3xxx_ptp_adjust_tod_time(ETH_NAME, adj->offset_dir, ppm);
 }
 
-static void tod_init(struct tod *t)
+static void tod_recv_init(struct tod *t)
 {
+	u16 val;
+
 	pid_init(&t->adj.pid);
 	t->adj.freq_adj = phy_freq_adj;
 	t->adj.offset_adj = phy_offset_adj;
 	t->adj.state = OFFSET_ADJ;
-#if 0
+
 	phy_c45_write(ETH_NAME, 0, 0x202, 0);
 	phy_c45_write(ETH_NAME, 0, 0x203, 100);
-#else
-	phy_c45_write(ETH_NAME, 0, 0x202, 0);
-	phy_c45_write(ETH_NAME, 0, 0x203, 0);
-#endif
-	tod_sync_to_pps_init();
+
+	val = phy_c45_read(ETH_NAME, 0, 0x330);
+	val = val | BIT(6);
+	val = val | BIT(7);
+	phy_c45_write(ETH_NAME, 0, 0x330, val);
+
+	val = phy_c45_read(ETH_NAME, 0, 0x20a);
+	val = val | BIT(11);
+	val = val & ~BIT(12);
+	val = val | BIT(13);
+	phy_c45_write(ETH_NAME, 0, 0x20a, val);
+
+	val = phy_c45_read(ETH_NAME, 0, 0x200);
+	val = val & ~JL3XXX_MULTI_SYNC_MODE;
+	val = val | JL3XXX_PPS_SYNC_MODE;
+	phy_c45_write(ETH_NAME, 0, 0x200, val);
+
+	tod_pps_rise_plus_init(false);
+
 	t->adj.freq_adj(&t->adj, 0);
 	t->adj.pid.init_flag = false;
 }
 
 static void tod_send_init(struct tod *t)
 {
+	u16 val;
+
 	pid_init(&t->adj.pid);
 	t->adj.freq_adj = phy_freq_adj;
 	t->adj.offset_adj = phy_offset_adj;
 	t->adj.state = OFFSET_ADJ;
-#if 1
+
 	phy_c45_write(ETH_NAME, 0, 0x202, 0);
 	phy_c45_write(ETH_NAME, 0, 0x203, 100);
-#endif
-	tod_sync_to_pps_init();
-	//tod_and_pps_out_init();
-	//tai_trig_gen_init();
-	tod_pps_rise_plus_init();
+	val = phy_c45_read(ETH_NAME, 0, 0x330);
+	val = val | BIT(6);
+	val = val | BIT(7);
+	phy_c45_write(ETH_NAME, 0, 0x330, val);
+
+	val = phy_c45_read(ETH_NAME, 0, 0x20a);
+	val = val & ~BIT(11);
+	val = val | BIT(12);
+	val = val & ~BIT(13);
+	phy_c45_write(ETH_NAME, 0, 0x20a, val);
+
+	val = phy_c45_read(ETH_NAME, 0, 0x200);
+	val = val & ~JL3XXX_MULTI_SYNC_MODE;
+	val = val | JL3XXX_PPS_SYNC_MODE;
+	phy_c45_write(ETH_NAME, 0, 0x200, val);
+	tod_pps_rise_plus_init(true);
+
 	t->adj.freq_adj(&t->adj, 0);
 	t->adj.pid.init_flag = false;
 }
@@ -755,7 +727,7 @@ int tod_recv(void)
 	int err;
 	t = calloc(1, sizeof(*t));
 
-	tod_init(t);
+	tod_recv_init(t);
 	pthread_mutex_init(&t->mutex, NULL);
 	err = pthread_create(&t->recv_worker, NULL, monitor_recv_status, t);
 	if (err) {
