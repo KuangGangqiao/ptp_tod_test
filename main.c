@@ -259,6 +259,7 @@ char *global_time_to_nmea(void)
 	u64 sec;
 
 	jl3xxx_ptp_get_tod_time(&sec, NULL);
+	sec -= 37; // 补偿闰秒
 	current_time_sec = sec;
 	utc_time = gmtime(&current_time_sec);
 	strftime(time_string, sizeof(time_string), nmea_format, utc_time);
@@ -267,15 +268,26 @@ char *global_time_to_nmea(void)
 	return time_string;
 }
 
+static bool get_pps_rise_intr_flag(void)
+{
+	u16 retval;
+
+	retval = phy_c45_read(ETH_NAME, 0, 0x306);
+	retval  = (retval & 0xffff) & BIT(12);
+
+	return (bool)retval;
+
+}
+
 static void *monitor_send_status(void *arg)
 {
 	struct tod *t = arg;
 
 	while (true) {
 		pthread_mutex_lock(&t->mutex);
-		t->is_valid = 0;
+		t->is_valid = get_pps_rise_intr_flag();
 		pthread_mutex_unlock(&t->mutex);
-		usleep(1000000);
+		usleep(200000);
 	}
 	return NULL;
 }
@@ -319,6 +331,7 @@ static int adj_state(struct tod *t)
 		printf("++++OFFSET_ADJ+++++: %d --- %d\n",
 			pps_rise_abs_offset(t->adj.offset), t->adj.offset);
 #endif
+#if 0
 		if (pps_rise_abs_offset(t->adj.offset) >
 		    pps_rise_abs_offset(t->adj.last_offset))
 			t->adj.offset_dir = NEGATIVE;
@@ -329,6 +342,7 @@ static int adj_state(struct tod *t)
 		t->adj.last_offset = t->adj.offset;
 		if (pps_rise_abs_offset(t->adj.offset) < ADJ_OFFSET_TO_FREQ)
 			t->adj.state = FREQ_ADJ;
+#endif
 		break;
 	case FREQ_ADJ:
 #if DEBUG
@@ -374,7 +388,7 @@ static void *monitor_adj_status(void *arg)
 {
 	struct tod *t = arg;
 	struct jl3xxx_tod_op ops = {1, PTP_TOD_CAPTURE_TIMER, 0, 1, 0};
-	u32 ns_lo, ns_hi, nano_seconds;
+	u32 ns_lo = 0, ns_hi = 0, nano_seconds =0;
 	u16 val = 0;
 
 	while (true) {
@@ -395,7 +409,7 @@ static void *monitor_adj_status(void *arg)
 			nano_seconds = (ns_hi << 16) | ns_lo;
 			phy_c45_write(ETH_NAME, 0, 0x20a,
 				      val & ~JL3XXX_CAP_VALID);
-			// inti adj state
+			// init adj state
 			t->adj.freq = nano_seconds;
 			t->adj.offset = nano_seconds;
 			adj_state(t);
@@ -604,28 +618,72 @@ static void tod_sync_to_pps_init(void)
 	phy_c45_write(ETH_NAME, 0, 0x200, val);
 }
 
-/*  Test 10MHz(100ns) generate clock of ToD compensated Timer */
-static void tai_trig_gen_init(void)
+static void tod_and_pps_out_init(void)
 {
 	u16 val;
 
 	val = phy_c45_read(ETH_NAME, 0, 0x330);
+	//val = val & ~BIT(6);
+	//val = val | BIT(7);
+
 	val = val | BIT(3);
 	val = val | BIT(4);
 	val = val & ~BIT(5);
 	phy_c45_write(ETH_NAME, 0, 0x330, val);
 
+	val = phy_c45_read(ETH_NAME, 0, 0x20a);
+	val = val | BIT(12);
+	val = val & ~BIT(13);
+	phy_c45_write(ETH_NAME, 0, 0x20a, val);
+
+	val = phy_c45_read(ETH_NAME, 0, 0x200);
+	val = val & ~JL3XXX_MULTI_SYNC_MODE;
+	val = val | JL3XXX_PPS_SYNC_MODE;
+	val = val | BIT(9);
+	phy_c45_write(ETH_NAME, 0, 0x200, val);
+}
+
+/*  Test 10MHz(100ns) generate clock of ToD compensated Timer */
+static void tai_trig_gen_init(void)
+{
+	u16 val;
+
 	phy_c45_write(ETH_NAME, 0, 0x202, 0);
 	phy_c45_write(ETH_NAME, 0, 0x203, 100);
 
-	phy_c45_write(ETH_NAME, 0, 0x31e, 100);
-	phy_c45_write(ETH_NAME, 0, 0x208, 0);
-	phy_c45_write(ETH_NAME, 0, 0x209, 5000);
-
 	val = phy_c45_read(ETH_NAME, 0, 0x200);
 	val = val | BIT(0);
+#if 0
+	val = val & ~BIT(1);
+#else
+	val = val | BIT(1);
+#endif
+#if 0
+	val = val & ~BIT(11);
+#else
 	val = val | BIT(11);
+#endif
 	phy_c45_write(ETH_NAME, 0, 0x200, val);
+
+
+	val = phy_c45_read(ETH_NAME, 0, 0x200);
+	printf("test_log0: 0x%x\n", val);
+}
+
+static void tod_pps_rise_plus_init(void)
+{
+	u16 val;
+
+	val = phy_c45_read(ETH_NAME, 0, 0x205);
+	val = val | BIT(8);
+	val = val | BIT(9);
+	val = val | BIT(10);
+
+	val = val | BIT(12);
+	val = val | BIT(13);
+	val = val | BIT(14);
+	val = val | BIT(15);
+	phy_c45_write(ETH_NAME, 0, 0x205, val);
 }
 
 static int phy_freq_adj(struct phy_adj *adj, int freq)
@@ -656,8 +714,32 @@ static void tod_init(struct tod *t)
 	t->adj.freq_adj = phy_freq_adj;
 	t->adj.offset_adj = phy_offset_adj;
 	t->adj.state = OFFSET_ADJ;
+#if 0
+	phy_c45_write(ETH_NAME, 0, 0x202, 0);
+	phy_c45_write(ETH_NAME, 0, 0x203, 100);
+#else
+	phy_c45_write(ETH_NAME, 0, 0x202, 0);
+	phy_c45_write(ETH_NAME, 0, 0x203, 0);
+#endif
 	tod_sync_to_pps_init();
-	tai_trig_gen_init();
+	t->adj.freq_adj(&t->adj, 0);
+	t->adj.pid.init_flag = false;
+}
+
+static void tod_send_init(struct tod *t)
+{
+	pid_init(&t->adj.pid);
+	t->adj.freq_adj = phy_freq_adj;
+	t->adj.offset_adj = phy_offset_adj;
+	t->adj.state = OFFSET_ADJ;
+#if 1
+	phy_c45_write(ETH_NAME, 0, 0x202, 0);
+	phy_c45_write(ETH_NAME, 0, 0x203, 100);
+#endif
+	tod_sync_to_pps_init();
+	//tod_and_pps_out_init();
+	//tai_trig_gen_init();
+	tod_pps_rise_plus_init();
 	t->adj.freq_adj(&t->adj, 0);
 	t->adj.pid.init_flag = false;
 }
@@ -708,6 +790,7 @@ int tod_send(void)
 	char *nmea_data;
 	t = calloc(1, sizeof(*t));
 
+	tod_send_init(t);
 	pthread_mutex_init(&t->mutex, NULL);
 	err = pthread_create(&t->send_worker, NULL, monitor_send_status, t);
 	if (err) {
@@ -717,6 +800,7 @@ int tod_send(void)
 	}
 
 	while (true) {
+#if 0
 		if (fd == -1) {
 			fd = serial_open(SERIALPORT, BAUD, 0, 0);
 			if (fd == -1) {
@@ -725,6 +809,8 @@ int tod_send(void)
 				continue;
 			}
 		}
+#endif
+
 		if (t->is_valid) {
 			nmea_data = global_time_to_nmea();
 			write(fd, nmea_data, strlen(nmea_data));
